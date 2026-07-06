@@ -11,7 +11,6 @@ from database import db
 from states import BotStates
 import keyboards as kb
 
-# Bot va Dispatcher obyektlarini yaratamiz
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -20,25 +19,22 @@ def check_admin(user_id):
     return user_id == SUPER_ADMIN_ID or user_id in db.get_admins()
 
 
-# --- REKLAMANI FONDA TARQATISH (BOT QOTMASLIGI UCHUN ALOHIDA TASK) ---
+# --- REKLAMANI FONDA TARQATISH ---
 async def send_broadcast_task(message: Message, users: list, admin_id: int):
     send_count = 0
     fail_count = 0
-
     for u in users:
         try:
-            # Telegram FloodWait sanksiyasiga tushmaslik va bot qotmasligi uchun copy_message
             await message.bot.copy_message(
                 chat_id=u[0],
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
             send_count += 1
-            await asyncio.sleep(0.05)  # Har bir xabar orasida kichik uzilish (sekundiga ~20 ta xabar)
+            await asyncio.sleep(0.05)
         except Exception:
             fail_count += 1
 
-    # Reklama yakunlangach adminni ogohlantirish
     try:
         await message.bot.send_message(
             admin_id,
@@ -54,6 +50,7 @@ async def send_broadcast_task(message: Message, users: list, admin_id: int):
 # --- START KOMANDASI ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
+    await state.clear()
     user_id = message.from_user.id
     full_name = message.from_user.full_name
     username = f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas"
@@ -103,6 +100,7 @@ async def send_anonymous_text(message: Message, state: FSMContext):
     chat_id = db.get_or_create_chat(owner_id, sender_id)
     db.save_message(chat_id, sender_id, message.text)
 
+    # Foydalanuvchilar haqida ma'lumotlarni bazadan olish (Adminga to'liq chiqarish uchun)
     owner_info = db.get_user(owner_id)
     owner_name = owner_info[2] if owner_info else "Noma'lum"
     owner_user = owner_info[3] if owner_info else "Mavjud emas"
@@ -117,15 +115,26 @@ async def send_anonymous_text(message: Message, state: FSMContext):
         parse_mode="Markdown"
     )
 
+    # 🕵️‍♂️ ADMINGA BORADIGAN TO'LIQ LOG
     admin_log = (
-        f"🕵️‍♂️ 📑 **[KUZATUV # {chat_id}]**\n\n"
-        f"👤 **Kimdan (Anonim):** {sender_name} | {sender_user} | ID: `{sender_id}`\n"
-        f"➡️ **Kimga (Havola Egasi):** {owner_name} | {owner_user} | ID: `{owner_id}`\n\n"
+        f"🕵️‍♂️ 📑 **[KUZATUV BOSHLANDI # {chat_id}]**\n\n"
+        f"👤 **KIMDAN (Anonim):**\n"
+        f" ├─ Ismi: {sender_name}\n"
+        f" ├─ Username: {sender_user}\n"
+        f" └─ ID: `{sender_id}`\n\n"
+        f"➡️ **KIMGA (Havola Egasi):**\n"
+        f" ├─ Ismi: {owner_name}\n"
+        f" ├─ Username: {owner_user}\n"
+        f" └─ ID: `{owner_id}`\n\n"
         f"💬 **Xabar matni:** {message.text}"
     )
     try:
-        await bot.send_message(SUPER_ADMIN_ID, admin_log, reply_markup=kb.get_admin_bridge_buttons(chat_id),
-                               parse_mode="Markdown")
+        await bot.send_message(
+            SUPER_ADMIN_ID, 
+            admin_log, 
+            reply_markup=kb.get_admin_bridge_buttons(chat_id),
+            parse_mode="Markdown"
+        )
     except Exception:
         pass
 
@@ -136,6 +145,7 @@ async def send_anonymous_text(message: Message, state: FSMContext):
 # --- FOYDALANUVCHILAR UCHUN UZLUKSIZ INLINE JAVOB ---
 @dp.callback_query(F.data.startswith("rep_"))
 async def handle_reply_callback(call: CallbackQuery, state: FSMContext):
+    await state.clear()
     _, chat_id, target_role = call.data.split("_")
     chat_id = int(chat_id)
 
@@ -147,6 +157,12 @@ async def handle_reply_callback(call: CallbackQuery, state: FSMContext):
 
 @dp.message(BotStates.reply_msg, F.text)
 async def process_continuous_reply(message: Message, state: FSMContext):
+    if check_admin(message.from_user.id):
+        current_data = await state.get_data()
+        if "target_role" not in current_data:
+            await state.clear()
+            return
+
     data = await state.get_data()
     chat_id = data.get("chat_id")
     target_role = data.get("target_role")
@@ -154,18 +170,25 @@ async def process_continuous_reply(message: Message, state: FSMContext):
     chat = db.get_chat_by_id(chat_id)
     if not chat: 
         await message.answer("❌ Suhbat topilmadi.")
+        await state.clear()
         return
 
     receiver_id, sender_id = chat
 
     if target_role == "anon":
         destination = sender_id
+        from_id = receiver_id
+        to_id = sender_id
         prefix = "↩️ **Havola egasidan javob keldi:**"
         next_role = "owner"
+        role_label = "HAVOLA EGASI"
     else:
         destination = receiver_id
+        from_id = sender_id
+        to_id = receiver_id
         prefix = "📥 **Anonim suhbatdoshingizdan yangi xabar:**"
         next_role = "anon"
+        role_label = "ANONIM"
 
     db.save_message(chat_id, message.from_user.id, message.text)
 
@@ -180,42 +203,56 @@ async def process_continuous_reply(message: Message, state: FSMContext):
     except Exception:
         await message.answer("❌ Xabarni yetkazishda xatolik yuz berdi.")
 
-    # --- ADMIN LOG (MUKAMMAL SHPION KUZATUVI) ---
-    sender_info = db.get_user(message.from_user.id)
-    sender_name = sender_info[2] if sender_info else message.from_user.full_name
-    sender_user = sender_info[3] if sender_info else (f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas")
+    # Bazadan ma'lumotlarni to'liq olib adminga ko'rsatish
+    f_user = db.get_user(from_id)
+    f_name = f_user[2] if f_user else message.from_user.full_name
+    f_username = f_user[3] if f_user else (f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas")
 
-    rcv_info = db.get_user(destination)
-    rcv_name = rcv_info[2] if rcv_info else "Noma'lum"
-    rcv_user = rcv_info[3] if rcv_info else "Mavjud emas"
+    t_user = db.get_user(to_id)
+    t_name = t_user[2] if t_user else "Noma'lum"
+    t_username = t_user[3] if t_user else "Mavjud emas"
 
+    # 🕵️‍♂️ INLINE TUGMA ORQALI JAVOB BERILGANDA ADMINGA BORADIGAN LOG
     admin_log = (
-        f"🕵️‍♂️ 📑 **[KUZATUV # {chat_id}]**\n\n"
-        f"👤 **Yozuvchi:** {sender_name} | {sender_user} | ID: `{message.from_user.id}`\n"
-        f"➡️ **Qabul qiluvchi:** {rcv_name} | {rcv_user} | ID: `{destination}`\n\n"
+        f"🕵️‍♂️ 📑 **[YANGI KUZATUV XABARI # {chat_id}]**\n\n"
+        f"✍️ **Yozuvchi (Xabar yuborgan):**\n"
+        f" ├─ Rol: {role_label}\n"
+        f" ├─ Ismi: {f_name}\n"
+        f" ├─ Username: {f_username}\n"
+        f" └─ ID: `{from_id}`\n\n"
+        f"🎯 **Qabul qiluvchi (Xabar borayotgan shaxs):**\n"
+        f" ├─ Ismi: {t_name}\n"
+        f" ├─ Username: {t_username}\n"
+        f" └─ ID: `{to_id}`\n\n"
         f"💬 **Xabar matni:** {message.text}"
     )
     try:
-        await bot.send_message(SUPER_ADMIN_ID, admin_log, reply_markup=kb.get_admin_bridge_buttons(chat_id),
-                               parse_mode="Markdown")
+        await bot.send_message(
+            SUPER_ADMIN_ID, 
+            admin_log, 
+            reply_markup=kb.get_admin_bridge_buttons(chat_id),
+            parse_mode="Markdown"
+        )
     except Exception:
         pass
+    
     await state.clear()
 
 
-# --- ADMIN: KO'PRIK (SHPION) BO'LIB ORAGA QO'SHILISH ---
+# --- ADMIN: ORAGA QO'SHILISH (BRIDGE) ---
 @dp.callback_query(F.data.startswith("abr_"))
 async def handle_admin_bridge(call: CallbackQuery, state: FSMContext):
     if not check_admin(call.from_user.id): return
+    await state.clear()
     _, chat_id, pretend_role = call.data.split("_")
     chat_id = int(chat_id)
 
     await state.update_data(bridge_chat_id=chat_id, pretend_role=pretend_role)
 
     if pretend_role == "anon":
-        await call.message.answer(f"✍️ **Suhbat #{chat_id}: Anonim nomidan Havola Egasiga** xabar yozing:")
+        await call.message.answer(f"🎭 **Suhbat #{chat_id}: [Anonim] nomidan** Havola Egasiga xabar yozing:")
     else:
-        await call.message.answer(f"✍️ **Suhbat #{chat_id}: Havola Egasi nomidan Anonimga** xabar yozing:")
+        await call.message.answer(f"👤 **Suhbat #{chat_id}: [Havola Egasi] nomidan** Anonimga xabar yozing:")
 
     await state.set_state(BotStates.admin_bridge_reply)
     await call.answer()
@@ -231,6 +268,7 @@ async def process_admin_bridge_reply(message: Message, state: FSMContext):
     chat = db.get_chat_by_id(chat_id)
     if not chat:
         await message.answer("❌ Ushbu suhbat faol emas.")
+        await state.clear()
         return
 
     receiver_id, sender_id = chat
@@ -258,22 +296,10 @@ async def process_admin_bridge_reply(message: Message, state: FSMContext):
     except Exception:
         await message.answer("❌ Xabarni yuborishda xatolik yuz berdi.")
 
-    # Admin o'zi yozgan aralashuv logi
-    admin_log = (
-        f"🕵️‍♂️ ⚠️ **[ADMIN ARALASHUVI # {chat_id}]**\n\n"
-        f"👨‍💻 **Admin ID:** `{message.from_user.id}`\n"
-        f"🎭 **Kimning nomidan yozdi:** {pretend_role.upper()}\n"
-        f"💬 **Yuborilgan matn:** {message.text}"
-    )
-    try:
-        await bot.send_message(SUPER_ADMIN_ID, admin_log, reply_markup=kb.get_admin_bridge_buttons(chat_id), parse_mode="Markdown")
-    except Exception:
-        pass
-
     await state.clear()
 
 
-# --- FOYDALANUVCHI MENYUSI: MENING HAVOLAM ---
+# --- FOYDALANUVCHI MENYUSI ---
 @dp.message(F.text == "🔗 Mening Havolam")
 async def show_my_link(message: Message):
     user = db.get_user(message.from_user.id)
@@ -290,7 +316,7 @@ async def open_admin(message: Message):
         await message.answer("👨‍💻 Admin panel ochildi:", reply_markup=kb.admin_menu)
 
 
-# --- ADMIN PANEL TUGMALARI BOSHQARUVI ---
+# --- ADMIN PANEL BARCHA INTEGRATSIYALARI ---
 @dp.message(F.text == "🏠 Oddiy rejim")
 async def close_admin(message: Message):
     if check_admin(message.from_user.id):
@@ -351,12 +377,11 @@ async def del_admin_finish(message: Message, state: FSMContext):
     await state.clear()
 
 
-# --- REKLAMA XIZMATI BO'LIMI (FONLI TIZIMDA) ---
 @dp.message(F.text == "📢 Reklama tarqatish")
 async def start_broadcast(message: Message, state: FSMContext):
     if check_admin(message.from_user.id):
         await message.answer(
-            "📢 **Barcha foydalanuvchilarga yuboriladigan reklama matnini (yoki rasmini) kiriting:**\n\n_Eslatma: Har qanday formatdagi xabar (matn, rasm, video) hammaga boradi._",
+            "📢 **Barcha foydalanuvchilarga yuboriladigan reklama matnini (yoki rasmini) kiriting:**",
             parse_mode="Markdown")
         await state.set_state(BotStates.admin_broadcast)
 
@@ -364,68 +389,111 @@ async def start_broadcast(message: Message, state: FSMContext):
 @dp.message(BotStates.admin_broadcast)
 async def send_broadcast(message: Message, state: FSMContext):
     if not check_admin(message.from_user.id): return
-
     users = db.get_all_users()
-    await message.answer(
-        "🚀 **Reklama tarqatish orqa fonda boshlandi!**\n"
-        "Bot mutlaqo qotib qolmaydi, foydalanuvchilar suhbatni bemalol davom ettirishi mumkin.\n"
-        "Tugagach sizga hisobot yuboriladi.",
-        reply_markup=kb.admin_menu
-    )
+    await message.answer("🚀 **Reklama tarqatish orqa fonda boshlandi!**", reply_markup=kb.admin_menu)
     await state.clear()
-
-    # Asosiy oqim qotmasligi uchun reklamani fonda (task) ishga tushirish
     asyncio.create_task(send_broadcast_task(message, users, message.from_user.id))
 
 
-# --- NUSXALASH TUGMASI CALLBACK ---
 @dp.callback_query(F.data == "copy_link")
 async def process_copy_link(call: CallbackQuery):
     user = db.get_user(call.from_user.id)
     bot_user = await bot.get_me()
     token = user[1] if user else "xato"
     share_link = f"https://t.me/{bot_user.username}?start={token}"
-
-    await call.message.answer(
-        f"📋 **Sizning shaxsiy havolangiz:**\n\n`{share_link}`\n\n"
-        f"👆 _Havola ustiga bir marta bossangiz avtomatik nusxalanadi._",
-        parse_mode="Markdown"
-    )
-    await call.answer("Havola nusxalash uchun yuborildi!")
+    await call.message.answer(f"📋 **Sizning shaxsiy havolangiz:**\n\n`{share_link}`", parse_mode="Markdown")
+    await call.answer()
 
 
-# 🛑 NOTANISH/TASODIFIY XABARLARNI USHLASH (ENG OXIRIDA) 🛑
+# --- TO'G'RIDAN TO'G'RI CHATGA YOZILGANDA (BOSHIDAGI MANTIQ) ---
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_unknown_messages(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
         return
 
-    user = db.get_user(message.from_user.id)
+    user_id = message.from_user.id
+    active_chats = []
+    if hasattr(db, 'get_all_chats'):
+        active_chats = db.get_all_chats()
+    elif hasattr(db, 'get_chats'):
+        active_chats = db.get_chats()
+
+    found_chat_id, destination_id, target_role = None, None, "anon"
+    for c in active_chats:
+        if len(c) >= 3:
+            if c[1] == user_id:
+                found_chat_id, destination_id, target_role = c[0], c[2], "owner"
+                break
+            elif c[2] == user_id:
+                found_chat_id, destination_id, target_role = c[0], c[1], "anon"
+                break
+
+    if found_chat_id and destination_id:
+        db.save_message(found_chat_id, user_id, message.text)
+        prefix = "↩️ **Havola egasidan javob keldi:**" if target_role == "owner" else "📥 **Anonim suhbatdoshingizdan yangi xabar:**"
+        next_role = "owner" if target_role == "owner" else "anon"
+        
+        try:
+            await bot.send_message(
+                destination_id, 
+                f"{prefix}\n\n💬 {message.text}", 
+                reply_markup=kb.get_reply_button(found_chat_id, next_role), 
+                parse_mode="Markdown"
+            )
+            await message.answer("✅ Xabaringiz yetkazildi.", reply_markup=kb.main_menu)
+        except Exception:
+            pass
+
+        # Bazadan ikkala tomonning ma'lumotlarini olish
+        sender_info = db.get_user(user_id)
+        s_name = sender_info[2] if sender_info else message.from_user.full_name
+        s_user = sender_info[3] if sender_info else "Mavjud emas"
+
+        rcv_info = db.get_user(destination_id)
+        rcv_name = rcv_info[2] if rcv_info else "Noma'lum"
+        rcv_user = rcv_info[3] if rcv_info else "Mavjud emas"
+
+        # 🕵️‍♂️ TO'G'RIDAN-TO'G'RI YOZILGANDA ADMINGA BORADIGAN LOG
+        admin_log = (
+            f"🕵️‍♂️ 📑 **[KUZATUV (To'g'ridan-to'g'ri) # {found_chat_id}]**\n\n"
+            f"✍️ **Yozuvchi:**\n"
+            f" ├─ Rol: {'HAVOLA EGASI' if target_role == 'owner' else 'ANONIM'}\n"
+            f" ├─ Ismi: {s_name}\n"
+            f" ├─ Username: {s_user}\n"
+            f" └─ ID: `{user_id}`\n\n"
+            f"🎯 **Qabul qiluvchi:**\n"
+            f" ├─ Ismi: {rcv_name}\n"
+            f" ├─ Username: {rcv_user}\n"
+            f" └─ ID: `{destination_id}`\n\n"
+            f"💬 **Xabar matni:** {message.text}"
+        )
+        try:
+            await bot.send_message(
+                SUPER_ADMIN_ID, 
+                admin_log, 
+                reply_markup=kb.get_admin_bridge_buttons(found_chat_id), 
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    # Agar hech qanday suhbat topilmasa:
+    user = db.get_user(user_id)
     bot_user = await bot.get_me()
     token = user[1] if user else "xato"
     share_link = f"https://t.me/{bot_user.username}?start={token}"
 
-    explain_text = (
-        "⚠️ **Kechirasiz, xabaringiz hech kimga yetkazilmadi.**\n\n"
-        "💡 Kimdir sizga anonim xabar yuborishi uchun avval o'z havolangizni do'stlaringizga tarqatishingiz kerak.\n\n"
-        "👇 Quyidagi tugmalar orqali shaxsiy havolangizni oling va ulashing:"
-    )
-
+    explain_text = "⚠️ **Xabaringiz hech kimga yetkazilmadi.**\n\nSizga yozishlari uchun havolangizni tarqating:"
     share_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🚀 Do'stlarga ulashish",
-                                 switch_inline_query=f"\n\n🤖 Menga anonim xabar yuborish uchun ushbu havolaga bosing:\n👉 {share_link}"),
-        ],
-        [
-            InlineKeyboardButton(text="📋 Havolani nusxalash", callback_data="copy_link")
-        ]
+        [InlineKeyboardButton(text="🚀 Do'stlarga ulashish", switch_inline_query=f"\n👉 {share_link}")],
+        [InlineKeyboardButton(text="📋 Havolani nusxalash", callback_data="copy_link")]
     ])
-
     await message.answer(explain_text, reply_markup=share_keyboard, parse_mode="Markdown")
 
 
-# --- RENDER UCHUN TEKIN PORT OCHISH (WEB SERVER) ---
+# --- WEB SERVER PORT ---
 async def handle(request):
     return web.Response(text="Bot is running!")
 
@@ -435,23 +503,14 @@ async def start_web_server():
     app.router.add_get('/', handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    
-    port = int(os.environ.get("PORT", 10000)) 
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 10000)))
     await site.start()
-    print(f"Web server started on port {port}")
 
 
-# --- ASOSIY ISHGA TUSHIRISH FUNKSIYASI (FAQAT BITTA BO'LISHI SHART) ---
+# --- MAIN ---
 async def main():
-    # 1. Fonda veb-serverni ishga tushiramiz (Render o'chib qolmasligi uchun)
     asyncio.create_task(start_web_server()) 
-    
-    # 2. Telegram dagi eski kelib to'planib qolgan xabarlarni tozalab tashlaymiz
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # 3. Botni polling rejimida yoqamiz
-    print("Bot is starting polling...")
     await dp.start_polling(bot)
 
 

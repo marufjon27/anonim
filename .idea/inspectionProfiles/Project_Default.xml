@@ -1,0 +1,66 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="false" level="WARNING" enabled_by_default="false">
+      <option name="ignoredPackages">
+        <list>
+          <option value="googlemaps" />
+          <option value="alabaster" />
+          <option value="Babel" />
+          <option value="CacheControl" />
+          <option value="cachy" />
+          <option value="cleo" />
+          <option value="clikit" />
+          <option value="colorama" />
+          <option value="crashtest" />
+          <option value="distlib" />
+          <option value="docutils" />
+          <option value="filelock" />
+          <option value="future" />
+          <option value="html5lib" />
+          <option value="imagesize" />
+          <option value="importlib-metadata" />
+          <option value="importlib-resources" />
+          <option value="Jinja2" />
+          <option value="keyring" />
+          <option value="kinopoiskpy" />
+          <option value="lockfile" />
+          <option value="lxml" />
+          <option value="MarkupSafe" />
+          <option value="msgpack" />
+          <option value="packaging" />
+          <option value="pastel" />
+          <option value="pexpect" />
+          <option value="pkginfo" />
+          <option value="platformdirs" />
+          <option value="poetry" />
+          <option value="poetry-core" />
+          <option value="ptyprocess" />
+          <option value="Pygments" />
+          <option value="pylev" />
+          <option value="pyparsing" />
+          <option value="python-dateutil" />
+          <option value="pytz" />
+          <option value="pywin32-ctypes" />
+          <option value="requests-toolbelt" />
+          <option value="shellingham" />
+          <option value="simplejson" />
+          <option value="six" />
+          <option value="snowballstemmer" />
+          <option value="Sphinx" />
+          <option value="sphinxcontrib-applehelp" />
+          <option value="sphinxcontrib-devhelp" />
+          <option value="sphinxcontrib-htmlhelp" />
+          <option value="sphinxcontrib-jsmath" />
+          <option value="sphinxcontrib-qthelp" />
+          <option value="sphinxcontrib-serializinghtml" />
+          <option value="telebot" />
+          <option value="tomlkit" />
+          <option value="virtualenv" />
+          <option value="webencodings" />
+          <option value="zipp" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

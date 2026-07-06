@@ -1,5 +1,6 @@
-# main.py
 import asyncio
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command, CommandObject
@@ -10,6 +11,7 @@ from database import db
 from states import BotStates
 import keyboards as kb
 
+# Bot va Dispatcher obyektlarini yaratamiz
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -25,17 +27,18 @@ async def send_broadcast_task(message: Message, users: list, admin_id: int):
 
     for u in users:
         try:
-            # Telegram FloodWait sanksiyasiga tushmaslik va bot qotmasligi uchun
+            # Telegram FloodWait sanksiyasiga tushmaslik va bot qotmasligi uchun copy_message
             await message.bot.copy_message(
                 chat_id=u[0],
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
             send_count += 1
-            await asyncio.sleep(0.05)  # Har bir xabar orasida kichik uzilish
+            await asyncio.sleep(0.05)  # Har bir xabar orasida kichik uzilish (sekundiga ~20 ta xabar)
         except Exception:
             fail_count += 1
 
+    # Reklama yakunlangach adminni ogohlantirish
     try:
         await message.bot.send_message(
             admin_id,
@@ -44,7 +47,7 @@ async def send_broadcast_task(message: Message, users: list, admin_id: int):
             f"❌ Botni bloklaganlar: {fail_count} ta",
             parse_mode="Markdown"
         )
-    except:
+    except Exception:
         pass
 
 
@@ -63,7 +66,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         alert = f"🆕 **Yangi foydalanuvchi:** {full_name}\n🆔 ID: `{user_id}`"
         try:
             await bot.send_message(SUPER_ADMIN_ID, alert, parse_mode="Markdown")
-        except:
+        except Exception:
             pass
     else:
         token = user[1]
@@ -123,7 +126,7 @@ async def send_anonymous_text(message: Message, state: FSMContext):
     try:
         await bot.send_message(SUPER_ADMIN_ID, admin_log, reply_markup=kb.get_admin_bridge_buttons(chat_id),
                                parse_mode="Markdown")
-    except:
+    except Exception:
         pass
 
     await message.answer("✅ Xabaringiz anonim tarzda yuborildi!", reply_markup=kb.main_menu)
@@ -149,7 +152,9 @@ async def process_continuous_reply(message: Message, state: FSMContext):
     target_role = data.get("target_role")
 
     chat = db.get_chat_by_id(chat_id)
-    if not chat: return
+    if not chat: 
+        await message.answer("❌ Suhbat topilmadi.")
+        return
 
     receiver_id, sender_id = chat
 
@@ -164,17 +169,21 @@ async def process_continuous_reply(message: Message, state: FSMContext):
 
     db.save_message(chat_id, message.from_user.id, message.text)
 
-    await bot.send_message(
-        destination,
-        f"{prefix}\n\n💬 {message.text}",
-        reply_markup=kb.get_reply_button(chat_id, next_role),
-        parse_mode="Markdown"
-    )
-    await message.answer("✅ Xabaringiz yetkazildi.", reply_markup=kb.main_menu)
+    try:
+        await bot.send_message(
+            destination,
+            f"{prefix}\n\n💬 {message.text}",
+            reply_markup=kb.get_reply_button(chat_id, next_role),
+            parse_mode="Markdown"
+        )
+        await message.answer("✅ Xabaringiz yetkazildi.", reply_markup=kb.main_menu)
+    except Exception:
+        await message.answer("❌ Xabarni yetkazishda xatolik yuz berdi.")
 
+    # --- ADMIN LOG (MUKAMMAL SHPION KUZATUVI) ---
     sender_info = db.get_user(message.from_user.id)
-    sender_name = sender_info[2] if sender_info else "Noma'lum"
-    sender_user = sender_info[3] if sender_info else "Mavjud emas"
+    sender_name = sender_info[2] if sender_info else message.from_user.full_name
+    sender_user = sender_info[3] if sender_info else (f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas")
 
     rcv_info = db.get_user(destination)
     rcv_name = rcv_info[2] if rcv_info else "Noma'lum"
@@ -189,12 +198,12 @@ async def process_continuous_reply(message: Message, state: FSMContext):
     try:
         await bot.send_message(SUPER_ADMIN_ID, admin_log, reply_markup=kb.get_admin_bridge_buttons(chat_id),
                                parse_mode="Markdown")
-    except:
+    except Exception:
         pass
     await state.clear()
 
 
-# --- ADMIN: KO'PRIK (SHPION) BO'LIB JAVOB BERISH ---
+# --- ADMIN: KO'PRIK (SHPION) BO'LIB ORAGA QO'SHILISH ---
 @dp.callback_query(F.data.startswith("abr_"))
 async def handle_admin_bridge(call: CallbackQuery, state: FSMContext):
     if not check_admin(call.from_user.id): return
@@ -220,7 +229,9 @@ async def process_admin_bridge_reply(message: Message, state: FSMContext):
     pretend_role = data.get("pretend_role")
 
     chat = db.get_chat_by_id(chat_id)
-    if not chat: return
+    if not chat:
+        await message.answer("❌ Ushbu suhbat faol emas.")
+        return
 
     receiver_id, sender_id = chat
 
@@ -235,15 +246,30 @@ async def process_admin_bridge_reply(message: Message, state: FSMContext):
         next_role = "owner"
         db.save_message(chat_id, receiver_id, f"[ADMIN AS OWNER]: {message.text}")
 
-    await bot.send_message(
-        destination,
-        f"{prefix}\n\n💬 {message.text}",
-        reply_markup=kb.get_reply_button(chat_id, next_role),
-        parse_mode="Markdown"
-    )
+    try:
+        await bot.send_message(
+            destination,
+            f"{prefix}\n\n💬 {message.text}",
+            reply_markup=kb.get_reply_button(chat_id, next_role),
+            parse_mode="Markdown"
+        )
+        await message.answer(f"🚀 Xabar muvaffaqiyatli tarzda '{pretend_role}' nomidan yetkazildi!",
+                             reply_markup=kb.admin_menu)
+    except Exception:
+        await message.answer("❌ Xabarni yuborishda xatolik yuz berdi.")
 
-    await message.answer(f"🚀 Xabar muvaffaqiyatli tarzda '{pretend_role}' nomidan yetkazildi!",
-                         reply_markup=kb.admin_menu)
+    # Admin o'zi yozgan aralashuv logi
+    admin_log = (
+        f"🕵️‍♂️ ⚠️ **[ADMIN ARALASHUVI # {chat_id}]**\n\n"
+        f"👨‍💻 **Admin ID:** `{message.from_user.id}`\n"
+        f"🎭 **Kimning nomidan yozdi:** {pretend_role.upper()}\n"
+        f"💬 **Yuborilgan matn:** {message.text}"
+    )
+    try:
+        await bot.send_message(SUPER_ADMIN_ID, admin_log, reply_markup=kb.get_admin_bridge_buttons(chat_id), parse_mode="Markdown")
+    except Exception:
+        pass
+
     await state.clear()
 
 
@@ -290,7 +316,7 @@ async def view_users(message: Message):
 @dp.message(F.text == "➕ Admin Qo'shish")
 async def add_admin_state(message: Message, state: FSMContext):
     if check_admin(message.from_user.id):
-        await message.answer("➕ Yangi admin Telegram ID-sini kiriting:");
+        await message.answer("➕ Yangi admin Telegram ID-sini kiriting:")
         await state.set_state(BotStates.add_admin)
 
 
@@ -299,7 +325,7 @@ async def add_admin_finish(message: Message, state: FSMContext):
     try:
         db.add_admin(int(message.text))
         await message.answer("✅ Yangi admin muvaffaqiyatli qo'shildi.", reply_markup=kb.admin_menu)
-    except:
+    except Exception:
         await message.answer("❌ Xatolik! ID raqam bo'lishi kerak.", reply_markup=kb.admin_menu)
     await state.clear()
 
@@ -307,7 +333,7 @@ async def add_admin_finish(message: Message, state: FSMContext):
 @dp.message(F.text == "➖ Admin O'chirish")
 async def del_admin_state(message: Message, state: FSMContext):
     if check_admin(message.from_user.id):
-        await message.answer("➖ O'chiriladigan admin Telegram ID-sini kiriting:");
+        await message.answer("➖ O'chiriladigan admin Telegram ID-sini kiriting:")
         await state.set_state(BotStates.del_admin)
 
 
@@ -320,7 +346,7 @@ async def del_admin_finish(message: Message, state: FSMContext):
         else:
             db.del_admin(del_id)
             await message.answer("✅ Admin muvaffaqiyatli o'chirildi.", reply_markup=kb.admin_menu)
-    except:
+    except Exception:
         await message.answer("❌ Xatolik!", reply_markup=kb.admin_menu)
     await state.clear()
 
@@ -399,39 +425,35 @@ async def handle_unknown_messages(message: Message, state: FSMContext):
     await message.answer(explain_text, reply_markup=share_keyboard, parse_mode="Markdown")
 
 
-async def main():
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-# main.py faylining eng oxirgi qismi:
-
-# --- RENDER UCHUN TEKIN PORT OCHISH ---
-import os
-from aiohttp import web
-
+# --- RENDER UCHUN TEKIN PORT OCHISH (WEB SERVER) ---
 async def handle(request):
     return web.Response(text="Bot is running!")
+
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    # Render avtomatik ravishda PORT muhit o'zgaruvchisini beradi
+    
     port = int(os.environ.get("PORT", 10000)) 
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"Web server started on port {port}")
 
+
+# --- ASOSIY ISHGA TUSHIRISH FUNKSIYASI (FAQAT BITTA BO'LISHI SHART) ---
 async def main():
-    # Fonda veb-serverni ham ishga tushiramiz
+    # 1. Fonda veb-serverni ishga tushiramiz (Render o'chib qolmasligi uchun)
     asyncio.create_task(start_web_server()) 
     
-    # Botni ishga tushirish
+    # 2. Telegram dagi eski kelib to'planib qolgan xabarlarni tozalab tashlaymiz
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # 3. Botni polling rejimida yoqamiz
+    print("Bot is starting polling...")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

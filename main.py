@@ -105,10 +105,6 @@ async def send_anonymous_text(message: Message, state: FSMContext):
 
     owner_info = db.get_user(owner_id)
     owner_name = owner_info[2] if owner_info else "Noma'lum"
-    owner_user = owner_info[3] if owner_info else "Mavjud emas"
-
-    sender_name = message.from_user.full_name
-    sender_user = f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas"
 
     await bot.send_message(
         owner_id,
@@ -119,8 +115,8 @@ async def send_anonymous_text(message: Message, state: FSMContext):
 
     admin_log = (
         f"🕵️‍♂️ 📑 **[KUZATUV # {chat_id}]**\n\n"
-        f"👤 **Kimdan (Anonim):** {sender_name} | {sender_user} | ID: `{sender_id}`\n"
-        f"➡️ **Kimga (Havola Egasi):** {owner_name} | {owner_user} | ID: `{owner_id}`\n\n"
+        f"👤 **Kimdan (Anonim):** ID: `{sender_id}`\n"
+        f"➡️ **Kimga (Havola Egasi):** {owner_name} | ID: `{owner_id}`\n\n"
         f"💬 **Xabar matni:** {message.text}"
     )
     try:
@@ -181,18 +177,10 @@ async def process_continuous_reply(message: Message, state: FSMContext):
         await message.answer("❌ Xabarni yetkazishda xatolik yuz berdi.")
 
     # --- ADMIN LOG (MUKAMMAL SHPION KUZATUVI) ---
-    sender_info = db.get_user(message.from_user.id)
-    sender_name = sender_info[2] if sender_info else message.from_user.full_name
-    sender_user = sender_info[3] if sender_info else (f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas")
-
-    rcv_info = db.get_user(destination)
-    rcv_name = rcv_info[2] if rcv_info else "Noma'lum"
-    rcv_user = rcv_info[3] if rcv_info else "Mavjud emas"
-
     admin_log = (
         f"🕵️‍♂️ 📑 **[KUZATUV # {chat_id}]**\n\n"
-        f"👤 **Yozuvchi:** {sender_name} | {sender_user} | ID: `{message.from_user.id}`\n"
-        f"➡️ **Qabul qiluvchi:** {rcv_name} | {rcv_user} | ID: `{destination}`\n\n"
+        f"👤 **Yozuvchi (ID):** `{message.from_user.id}`\n"
+        f"➡️ **Qabul qiluvchi (ID):** `{destination}`\n\n"
         f"💬 **Xabar matni:** {message.text}"
     )
     try:
@@ -273,7 +261,7 @@ async def process_admin_bridge_reply(message: Message, state: FSMContext):
     await state.clear()
 
 
-# --- FOYDALANUVCHI MENYUSI: MENING HAVOLAM ---
+# --- FOYDALANUCHI MENYUSI: MENING HAVOLAM ---
 @dp.message(F.text == "🔗 Mening Havolam")
 async def show_my_link(message: Message):
     user = db.get_user(message.from_user.id)

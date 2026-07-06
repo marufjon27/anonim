@@ -405,3 +405,33 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# main.py faylining eng oxirgi qismi:
+
+# --- RENDER UCHUN TEKIN PORT OCHISH ---
+import os
+from aiohttp import web
+
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Render avtomatik ravishda PORT muhit o'zgaruvchisini beradi
+    port = int(os.environ.get("PORT", 10000)) 
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server started on port {port}")
+
+async def main():
+    # Fonda veb-serverni ham ishga tushiramiz
+    asyncio.create_task(start_web_server()) 
+    
+    # Botni ishga tushirish
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
